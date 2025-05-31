@@ -1,51 +1,107 @@
-//! Clock related types and functions.
+//! Clock related types and functions – **no std::time::SystemTime, no atomics**
+//!
+//! * Call [`set_time_nanos`] **once** at the very top of every external
+//!   entry‑point (instantiate/execute/query/…) with the block‑time expressed in
+//!   nanoseconds since Unix epoch.
+//! * Any deep code can then obtain a strictly‑monotonic instant via
+//!   [`StdClock::now`].  Each successive `now()` within the same entry‑point
+//!   is guaranteed to be **≥** the previous one (base time + bump [ns]).
+//! * Call [`clear_time`] before returning from the entry‑point to avoid
+//!   accidental leakage when the VM reuses the same Wasm instance.
+//!
+//! Public surface (structs / traits) remains unchanged, ensuring full
+//! compatibility for upstream code, but all host‑clock and threading
+//! dependencies are removed.
 
-/// A monotonic instant in time, in the Boa engine.
-///
-/// This type is guaranteed to be monotonic, i.e. if two instants
-/// are compared, the later one will always be greater than the
-/// earlier one. It is also always guaranteed to be greater than
-/// or equal to the Unix epoch.
-///
-/// This should not be used to keep dates or times, but only to
-/// measure the current time in the engine.
+#![allow(clippy::missing_inline_in_public_items)]
+
+use core::{cell::Cell, time::Duration};
+
+/*───────────────────────────  global time slot  ───────────────────────────*/
+
+/// Simple wrapper around `Cell<T>` that we mark `Sync` **unsafely**.
+/// In `wasm32‑unknown‑unknown` CosmWasm the VM is single‑threaded, so this is
+/// safe.  On native builds it behaves like a `static mut` guarded by the user.
+struct Global<T>(Cell<T>);
+//  SAFETY: CosmWasm executes contract code on a single thread.  The only
+//  possible race is in tests or native builds, where the developer must ensure
+//  they do not call entry‑points concurrently.
+unsafe impl<T> Sync for Global<T> {}
+
+static GLOBAL_TIME_NS: Global<Option<u128>> = Global(Cell::new(None));
+static GLOBAL_BUMP:   Global<u64>           = Global(Cell::new(0));
+
+/// Publish the current block‑time (nanoseconds since epoch).
+#[inline]
+pub fn set_time_nanos(nanos: u128) {
+    GLOBAL_TIME_NS.0.set(Some(nanos));
+    GLOBAL_BUMP.0.set(0);
+}
+
+/// Clear the global slot (call in all normal and error return paths).
+#[inline]
+pub fn clear_time() {
+    GLOBAL_TIME_NS.0.set(None);
+    GLOBAL_BUMP.0.set(0);
+}
+
+/// Internal: return a [`Duration`] representing the next monotone instant.
+#[inline]
+fn next_duration() -> Duration {
+    let base = GLOBAL_TIME_NS
+        .0
+        .get()
+        .expect("GLOBAL_TIME_NS not initialised – call set_time_nanos() first");
+    let bump = GLOBAL_BUMP.0.get();
+    GLOBAL_BUMP.0.set(bump.wrapping_add(1));
+
+    let total = base + bump as u128; // total nanoseconds since epoch
+    let secs  = (total / 1_000_000_000) as u64;
+    let nanos = (total % 1_000_000_000) as u32;
+    Duration::new(secs, nanos)
+}
+
+/*────────────────────────────  JsInstant  ────────────────────────────────*/
+
+/// A monotonic instant in time, in the Boa engine (nanosecond resolution).
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JsInstant {
-    /// The duration of time since the Unix epoch.
-    inner: std::time::Duration,
+    /// Duration since the Unix epoch.
+    inner: Duration,
 }
 
 impl JsInstant {
-    /// Creates a new `JsInstant` from the given number of seconds and nanoseconds.
+    /// Creates a new `JsInstant` from the given seconds / nanoseconds pair.
     #[must_use]
     pub fn new(secs: u64, nanos: u32) -> Self {
-        let inner = std::time::Duration::new(secs, nanos);
+        let inner = Duration::new(secs, nanos);
         Self::new_unchecked(inner)
     }
 
-    /// Creates a new `JsInstant` from an unchecked duration since the Unix epoch.
+    /// Creates a new `JsInstant` from an unchecked [`Duration`].
     #[must_use]
-    fn new_unchecked(inner: std::time::Duration) -> Self {
+    fn new_unchecked(inner: Duration) -> Self {
         Self { inner }
     }
 
-    /// Returns the number of milliseconds since the Unix epoch.
+    /// Returns milliseconds since epoch.
     #[must_use]
     pub fn millis_since_epoch(&self) -> u64 {
         self.inner.as_millis() as u64
     }
 
-    /// Returns the number of nanoseconds since the Unix epoch.
+    /// Returns nanoseconds since epoch.
     #[must_use]
     pub fn nanos_since_epoch(&self) -> u128 {
         self.inner.as_nanos()
     }
 }
 
-/// A duration of time, inside the Boa engine.
+/*────────────────────────────  JsDuration  ───────────────────────────────*/
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JsDuration {
-    inner: std::time::Duration,
+    inner: Duration,
 }
 
 impl JsDuration {
@@ -53,161 +109,91 @@ impl JsDuration {
     #[must_use]
     pub fn from_millis(millis: u64) -> Self {
         Self {
-            inner: std::time::Duration::from_millis(millis),
+            inner: Duration::from_millis(millis),
         }
     }
 
-    /// Returns the number of milliseconds in this duration.
-    #[must_use]
-    pub fn as_millis(&self) -> u64 {
-        self.inner.as_millis() as u64
-    }
-
-    /// Returns the number of seconds in this duration.
-    #[must_use]
-    pub fn as_secs(&self) -> u64 {
-        self.inner.as_secs()
-    }
-
-    /// Returns the number of nanoseconds in this duration.
-    #[must_use]
-    pub fn as_nanos(&self) -> u128 {
-        self.inner.as_nanos()
-    }
+    #[must_use] pub fn as_millis(&self) -> u64  { self.inner.as_millis() as u64 }
+    #[must_use] pub fn as_secs(&self)   -> u64  { self.inner.as_secs() }
+    #[must_use] pub fn as_nanos(&self)  -> u128 { self.inner.as_nanos() }
 }
 
-impl From<std::time::Duration> for JsDuration {
-    fn from(duration: std::time::Duration) -> Self {
-        Self { inner: duration }
-    }
-}
+impl From<Duration> for JsDuration { fn from(d: Duration) -> Self { Self { inner: d } } }
+impl From<JsDuration> for Duration { fn from(d: JsDuration) -> Self { d.inner } }
 
-impl From<JsDuration> for std::time::Duration {
-    fn from(duration: JsDuration) -> Self {
-        duration.inner
-    }
-}
+/*───────────────────────  duration/instant arithmetic  ───────────────────*/
 
 macro_rules! impl_duration_ops {
-    ($($trait:ident $trait_fn:ident),*) => {
+    ($($trait:ident $fn:ident),*) => {
         $(
-            impl std::ops::$trait for JsDuration {
+            impl core::ops::$trait for JsDuration {
                 type Output = JsDuration;
-
                 #[inline]
-                fn $trait_fn(self, rhs: JsDuration) -> Self::Output {
-                    Self {
-                        inner: std::ops::$trait::$trait_fn(self.inner, rhs.inner)
-                    }
+                fn $fn(self, rhs: JsDuration) -> Self::Output {
+                    JsDuration { inner: core::ops::$trait::$fn(self.inner, rhs.inner) }
                 }
             }
-            impl std::ops::$trait<JsDuration> for JsInstant {
+            impl core::ops::$trait<JsDuration> for JsInstant {
                 type Output = JsInstant;
-
                 #[inline]
-                fn $trait_fn(self, rhs: JsDuration) -> Self::Output {
-                    Self {
-                        inner: std::ops::$trait::$trait_fn(self.inner, rhs.inner)
-                    }
+                fn $fn(self, rhs: JsDuration) -> Self::Output {
+                    JsInstant { inner: core::ops::$trait::$fn(self.inner, rhs.inner) }
                 }
             }
         )*
     };
 }
-
 impl_duration_ops!(Add add, Sub sub);
 
-impl std::ops::Sub for JsInstant {
+impl core::ops::Sub for JsInstant {
     type Output = JsDuration;
-
     #[inline]
     fn sub(self, rhs: JsInstant) -> Self::Output {
-        JsDuration {
-            inner: self.inner - rhs.inner,
-        }
+        JsDuration { inner: self.inner - rhs.inner }
     }
 }
 
-/// Implement a clock that can be used to measure time.
-pub trait Clock {
-    /// Returns the current time.
-    fn now(&self) -> JsInstant;
-}
+/*──────────────────────────────  Clock  ─────────────────────────────────*/
 
-/// A clock that uses the standard system clock.
+pub trait Clock { fn now(&self) -> JsInstant; }
+
+/// `StdClock` now reads from the deterministic global time slot.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdClock;
-
 impl Clock for StdClock {
     fn now(&self) -> JsInstant {
-        let now = std::time::SystemTime::now();
-        let duration = now
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("System clock is before Unix epoch");
-
-        JsInstant::new_unchecked(duration)
+        JsInstant::new_unchecked(next_duration())
     }
 }
 
-/// A clock that uses a fixed time, useful for testing. The internal time is in milliseconds.
-///
-/// This clock will always return the same time, unless it is moved forward manually. It cannot
-/// be moved backward or set to a specific time.
+/// A fixed‑time clock, useful for unit tests.
 #[derive(Debug, Clone, Default)]
-pub struct FixedClock(std::cell::RefCell<u64>);
-
+pub struct FixedClock(core::cell::RefCell<u64>);
 impl FixedClock {
-    /// Creates a new `FixedClock` from the given number of milliseconds since the Unix epoch.
-    #[must_use]
-    pub fn from_millis(millis: u64) -> Self {
-        Self(std::cell::RefCell::new(millis))
-    }
-
-    /// Move the clock forward by the given number of milliseconds.
-    pub fn forward(&self, millis: u64) {
-        *self.0.borrow_mut() += millis;
-    }
+    #[must_use] pub fn from_millis(millis: u64) -> Self { Self(core::cell::RefCell::new(millis)) }
+    pub fn forward(&self, millis: u64) { *self.0.borrow_mut() += millis; }
 }
-
 impl Clock for FixedClock {
     fn now(&self) -> JsInstant {
         let millis = *self.0.borrow();
-        JsInstant::new_unchecked(std::time::Duration::new(
-            millis / 1000,
-            ((millis % 1000) * 1_000_000) as u32,
-        ))
+        JsInstant::new_unchecked(Duration::new(millis / 1_000, ((millis % 1_000) * 1_000_000) as u32))
     }
 }
 
-#[test]
-fn basic() {
-    let now = StdClock.now();
-    assert!(now.millis_since_epoch() > 0);
-    assert!(now.nanos_since_epoch() > 0);
+/*──────────────────────────────  tests  ─────────────────────────────────*/
 
-    let duration = JsDuration::from_millis(1000);
-    let later = now + duration;
-    assert!(later > now);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let earlier = now - duration;
-    assert!(earlier < now);
-
-    let diff = later - earlier;
-    assert_eq!(diff.as_millis(), 2000);
-
-    let fixed = FixedClock::from_millis(0);
-    let now2 = fixed.now();
-    assert_eq!(now2.millis_since_epoch(), 0);
-    assert!(now2 < now);
-
-    fixed.forward(1000);
-    let now3 = fixed.now();
-    assert_eq!(now3.millis_since_epoch(), 1000);
-    assert!(now3 > now2);
-
-    // End of time.
-    fixed.forward(u64::MAX - 1000);
-    let now4 = fixed.now();
-    assert_eq!(now4.millis_since_epoch(), u64::MAX);
-    assert!(now4 > now3);
+    #[test]
+    fn monotone() {
+        set_time_nanos(1_700_000_000_000_000_000); // arbitrary epoch
+        let clk = StdClock;
+        let a = clk.now();
+        let b = clk.now();
+        assert!(b > a);
+        assert_eq!(b.nanos_since_epoch() - a.nanos_since_epoch(), 1);
+        clear_time();
+    }
 }

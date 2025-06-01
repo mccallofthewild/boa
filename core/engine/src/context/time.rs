@@ -16,9 +16,8 @@
 #![allow(clippy::missing_inline_in_public_items)]
 
 use core::{cell::Cell, time::Duration};
-use monotonic_time::next_duration;
 
-pub use monotonic_time::{clear_time, set_time_nanos};
+pub use monotonic_time::{clear_time, next_duration, set_time_nanos};
 
 /*────────────────────────────  JsInstant  ────────────────────────────────*/
 

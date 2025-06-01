@@ -6,6 +6,7 @@ use crate::{
     realm::Realm,
     Context, JsResult, JsString, JsValue,
 };
+use monotonic_time::next_duration;
 use time::{OffsetDateTime, UtcOffset};
 
 /// [`Host Hooks`] customizable by the host code or engine.
@@ -187,8 +188,9 @@ pub trait HostHooks {
         note = "Use `context.clock().now().millis_since_epoch()` instead"
     )]
     fn utc_now(&self) -> i64 {
-        let now = OffsetDateTime::now_utc();
-        now.unix_timestamp() * 1000 + i64::from(now.millisecond())
+        // let now = OffsetDateTime::now_utc();
+        // now.unix_timestamp() * 1000 + i64::from(now.millisecond())
+        next_duration().as_millis().try_into().unwrap()
     }
 
     /// Returns the offset of the local timezone to the `utc` timezone in seconds.

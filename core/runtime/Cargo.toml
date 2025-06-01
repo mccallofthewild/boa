@@ -16,6 +16,7 @@ boa_gc.workspace = true
 boa_interop.workspace = true
 rustc-hash = { workspace = true, features = ["std"] }
 url = { workspace = true, optional = true }
+monotonic_time.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true

@@ -69,6 +69,7 @@ js = ["dep:web-time", "dep:getrandom"]
 
 [dependencies]
 tag_ptr.workspace = true
+monotonic_time.workspace = true
 boa_interner.workspace = true
 boa_gc = { workspace = true, features = ["thin-vec", "boa_string"] }
 boa_profiler.workspace = true

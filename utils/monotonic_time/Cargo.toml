@@ -1,0 +1,14 @@
+[package]
+name = "monotonic_time"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

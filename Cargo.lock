@@ -390,6 +390,7 @@ dependencies = [
  "intrusive-collections",
  "itertools 0.14.0",
  "jemallocator",
+ "monotonic_time",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -548,6 +549,7 @@ dependencies = [
  "boa_gc",
  "boa_interop",
  "indoc",
+ "monotonic_time",
  "rustc-hash 2.1.1",
  "textwrap",
  "url",
@@ -2544,6 +2546,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9bec4598fddb13cc7b528819e697852653252b760f1228b7642679bf2ff2cd07"
 
 [[package]]
+name = "monotonic_time"
+version = "0.20.0"
+
+[[package]]
 name = "ndarray"
 version = "0.15.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3758,7 +3764,6 @@ checksum = "8a7619e19bc266e0f9c5e6686659d394bc57973859340060a69221e57dbc0c40"
 dependencies = [
  "deranged",
  "itoa",
- "js-sys",
  "libc",
  "num-conv",
  "num_threads",

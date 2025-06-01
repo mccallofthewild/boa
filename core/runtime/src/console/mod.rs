@@ -23,11 +23,9 @@ use boa_engine::{
     Context, JsArgs, JsData, JsError, JsResult, JsString, JsSymbol,
 };
 use boa_gc::{Finalize, Trace};
+use monotonic_time::next_duration;
 use rustc_hash::FxHashMap;
-use std::{
-    cell::RefCell, collections::hash_map::Entry, fmt::Write as _, io::Write, rc::Rc,
-    time::SystemTime,
-};
+use std::{cell::RefCell, collections::hash_map::Entry, fmt::Write as _, io::Write, rc::Rc};
 
 /// A trait that can be used to forward console logs to an implementation.
 pub trait Logger: Trace + Sized {
@@ -679,10 +677,11 @@ impl Console {
 
     /// Returns current system time in ms.
     fn system_time_in_ms() -> u128 {
-        let now = SystemTime::now();
-        now.duration_since(SystemTime::UNIX_EPOCH)
-            .expect("negative duration")
-            .as_millis()
+        // let now = SystemTime::now();
+        // now.duration_since(SystemTime::UNIX_EPOCH)
+        //     .expect("negative duration")
+        //     .as_millis()
+        next_duration().as_millis()
     }
 
     /// `console.time(label)`

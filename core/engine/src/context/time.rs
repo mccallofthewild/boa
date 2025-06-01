@@ -18,6 +18,8 @@
 use core::{cell::Cell, time::Duration};
 use monotonic_time::next_duration;
 
+pub use monotonic_time::{clear_time, set_time_nanos};
+
 /*────────────────────────────  JsInstant  ────────────────────────────────*/
 
 /// A monotonic instant in time, in the Boa engine (nanosecond resolution).
